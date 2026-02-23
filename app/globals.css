@@ -24,3 +24,41 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+input,
+textarea,
+input::placeholder,
+textarea::placeholder {
+  color: #374151;
+}
+input::placeholder,
+textarea::placeholder {
+  opacity: 1;
+}
+
+/* Hide scrollbar but keep scroll functionality */
+html {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+html::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Cursor pointer for interactive elements */
+button,
+[role="button"],
+a,
+input[type="checkbox"],
+input[type="radio"],
+label[for],
+select {
+  cursor: pointer;
+}
