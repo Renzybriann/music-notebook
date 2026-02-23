@@ -101,7 +101,7 @@ export default function AuthForm() {
         )}
         <div className="flex gap-3">
           <button type="submit" disabled={submitting} style={buttonStyle(true)}>
-            {isSignUp ? 'Sign Up' : 'Sign In'}
+            {submitting ? (isSignUp ? 'Signing up...' : 'Signing in...') : (isSignUp ? 'Sign Up' : 'Sign In')}
           </button>
           <button
             type="button"
