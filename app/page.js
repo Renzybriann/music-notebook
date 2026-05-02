@@ -134,11 +134,19 @@ export default function MusicNotebook() {
       setNewSong(prev => ({ ...prev, audioFile: file, audioUrl }));
       const audio = new Audio(audioUrl);
       audio.addEventListener('loadedmetadata', () => {
-        const sec = Math.floor(audio.duration);
+        const raw = audio.duration;
+        const valid = Number.isFinite(raw) && raw > 0.5;
+        const sec = valid ? Math.floor(raw) : 0;
         const m = Math.floor(sec / 60);
         const s = sec % 60;
-        const maxEnd = Math.min(60, sec);
-        setNewSong(prev => ({ ...prev, duration: `${m}:${s.toString().padStart(2, '0')}`, durationSeconds: sec, startTimeSeconds: 0, endTimeSeconds: maxEnd }));
+        const maxEnd = valid ? Math.min(60, sec) : null;
+        setNewSong((prev) => ({
+          ...prev,
+          duration: valid ? `${m}:${s.toString().padStart(2, '0')}` : '',
+          durationSeconds: valid ? sec : null,
+          startTimeSeconds: 0,
+          endTimeSeconds: maxEnd,
+        }));
       });
     } else {
       setError('Please select a valid audio file (MP3, WAV, etc.)');

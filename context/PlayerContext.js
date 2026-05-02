@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useLayoutEffect, useRef, useState } from 'react';
 
 const PlayerContext = createContext(null);
 
@@ -19,13 +19,9 @@ export function PlayerProvider({ children }) {
     setCurrentSong(song);
     setQueue(list.length ? list : (song ? [song] : []));
     setIsPlaying(true);
-    if (song?.audioUrl && audioRef.current) {
-      audioRef.current.src = song.audioUrl;
-      audioRef.current.volume = volume;
-      audioRef.current.currentTime = song.startTimeSeconds ?? 0;
-      audioRef.current.play();
-    }
-  }, [volume]);
+    // Actual <audio> src / play() runs in PlayerAudio useLayoutEffect so the ref and
+    // metadata are always in sync (avoids silent failures when ref or load state races).
+  }, []);
 
   const playNext = useCallback(() => {
     if (!currentSong || !queue.length) return;
@@ -42,12 +38,17 @@ export function PlayerProvider({ children }) {
   }, [currentSong, queue, isShuffled, play]);
 
   const playPrev = useCallback(() => {
-    if (!audioRef.current) return;
-    if (audioRef.current.currentTime > 2) {
-      audioRef.current.currentTime = 0;
+    if (!audioRef.current || !currentSong) return;
+    const trimStart = currentSong.startTimeSeconds ?? 0;
+    if (audioRef.current.currentTime > trimStart + 2) {
+      try {
+        audioRef.current.currentTime = trimStart;
+      } catch (_) {
+        /* ignore */
+      }
       return;
     }
-    if (!currentSong || !queue.length) return;
+    if (!queue.length) return;
     const idx = queue.findIndex(s => s.id === currentSong.id);
     const prevIdx = idx <= 0 ? queue.length - 1 : idx - 1;
     const prev = queue[prevIdx];
@@ -55,11 +56,9 @@ export function PlayerProvider({ children }) {
   }, [currentSong, queue, play]);
 
   const togglePlayPause = useCallback(() => {
-    if (!audioRef.current) return;
-    if (isPlaying) audioRef.current.pause();
-    else audioRef.current.play();
-    setIsPlaying(!isPlaying);
-  }, [isPlaying]);
+    if (!currentSong?.audioUrl) return;
+    setIsPlaying((p) => !p);
+  }, [currentSong?.audioUrl]);
 
   const addToQueue = useCallback((song) => {
     if (!currentSong && queue.length === 0) {
@@ -139,7 +138,12 @@ export function PlayerProvider({ children }) {
 }
 
 function PlayerAudio() {
-  const { audioRef, currentSong, isLooping, playNext, setProgress, setDuration } = usePlayer();
+  const { audioRef, currentSong, isPlaying, isLooping, playNext, setProgress, setDuration, volume } = usePlayer();
+  const lastTrackKeyRef = useRef('');
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+  const currentSongRef = useRef(currentSong);
+  currentSongRef.current = currentSong;
 
   React.useEffect(() => {
     if (audioRef.current) {
@@ -147,20 +151,77 @@ function PlayerAudio() {
     }
   }, [audioRef, isLooping]);
 
+  React.useEffect(() => {
+    const el = audioRef.current;
+    if (el) el.volume = volume;
+  }, [audioRef, volume]);
+
+  useLayoutEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+
+    if (!currentSong?.audioUrl) {
+      el.pause();
+      el.removeAttribute('src');
+      lastTrackKeyRef.current = '';
+      return;
+    }
+
+    const key = `${currentSong.id}|${currentSong.audioUrl}`;
+    const needReload = lastTrackKeyRef.current !== key;
+    lastTrackKeyRef.current = key;
+
+    const applyStartAndMaybePlay = () => {
+      const song = currentSongRef.current;
+      const start = song?.startTimeSeconds ?? 0;
+      const d = el.duration;
+      setDuration(Number.isFinite(d) ? d : 0);
+      try {
+        el.currentTime = start;
+      } catch (_) {
+        /* seek before buffer ready */
+      }
+      if (isPlayingRef.current) {
+        void el.play().catch((e) => console.warn('[Player] play() failed', e?.message));
+      } else {
+        el.pause();
+      }
+    };
+
+    if (needReload) {
+      el.src = currentSong.audioUrl;
+      const onMeta = () => applyStartAndMaybePlay();
+      el.addEventListener('loadedmetadata', onMeta, { once: true });
+      el.load();
+      return () => {
+        el.removeEventListener('loadedmetadata', onMeta);
+      };
+    }
+    if (isPlaying) {
+      void el.play().catch((e) => console.warn('[Player] play() failed', e?.message));
+    } else {
+      el.pause();
+    }
+  }, [audioRef, currentSong?.id, currentSong?.audioUrl, currentSong?.startTimeSeconds, isPlaying, setDuration]);
+
   const handleTimeUpdate = React.useCallback(() => {
     if (!audioRef.current) return;
     const t = audioRef.current.currentTime;
     setProgress(t);
     const end = currentSong?.endTimeSeconds;
-    if (end != null && t >= end - 0.1) {
+    const endOk = end != null && Number.isFinite(end) && end > 0.25;
+    if (endOk && t >= end - 0.1) {
       audioRef.current.pause();
       if (!isLooping) playNext();
     }
   }, [currentSong?.endTimeSeconds, isLooping, playNext, setProgress]);
 
   const handleCanPlay = React.useCallback(() => {
-    if (audioRef.current && currentSong?.startTimeSeconds != null) {
+    if (!audioRef.current || currentSong?.startTimeSeconds == null) return;
+    try {
       audioRef.current.currentTime = currentSong.startTimeSeconds;
+    } catch (_) {
+      /* ignore */
     }
   }, [currentSong?.id, currentSong?.startTimeSeconds]);
 
@@ -168,7 +229,12 @@ function PlayerAudio() {
     <audio
       ref={audioRef}
       onTimeUpdate={handleTimeUpdate}
-      onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
+      onLoadedMetadata={() => {
+        const el = audioRef.current;
+        if (!el) return;
+        const d = el.duration;
+        setDuration(Number.isFinite(d) ? d : 0);
+      }}
       onCanPlay={handleCanPlay}
       onEnded={() => {
         if (!isLooping) playNext();
