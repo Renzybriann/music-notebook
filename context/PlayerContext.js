@@ -139,7 +139,6 @@ export function PlayerProvider({ children }) {
 
 function PlayerAudio() {
   const { audioRef, currentSong, isPlaying, isLooping, playNext, setProgress, setDuration, volume } = usePlayer();
-  const lastTrackKeyRef = useRef('');
   const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
   const currentSongRef = useRef(currentSong);
@@ -156,6 +155,8 @@ function PlayerAudio() {
     if (el) el.volume = volume;
   }, [audioRef, volume]);
 
+  // Load / decode new source when the track URL changes (no isPlaying here — avoids Strict Mode
+  // double-invoke skipping the real load: we must not "commit" a key until metadata has fired).
   useLayoutEffect(() => {
     const el = audioRef.current;
     if (!el) return;
@@ -163,15 +164,14 @@ function PlayerAudio() {
     if (!currentSong?.audioUrl) {
       el.pause();
       el.removeAttribute('src');
-      lastTrackKeyRef.current = '';
       return;
     }
 
-    const key = `${currentSong.id}|${currentSong.audioUrl}`;
-    const needReload = lastTrackKeyRef.current !== key;
-    lastTrackKeyRef.current = key;
+    el.src = currentSong.audioUrl;
+    let cancelled = false;
 
-    const applyStartAndMaybePlay = () => {
+    const onMeta = () => {
+      if (cancelled) return;
       const song = currentSongRef.current;
       const start = song?.startTimeSeconds ?? 0;
       const d = el.duration;
@@ -188,21 +188,27 @@ function PlayerAudio() {
       }
     };
 
-    if (needReload) {
-      el.src = currentSong.audioUrl;
-      const onMeta = () => applyStartAndMaybePlay();
-      el.addEventListener('loadedmetadata', onMeta, { once: true });
-      el.load();
-      return () => {
-        el.removeEventListener('loadedmetadata', onMeta);
-      };
-    }
+    el.addEventListener('loadedmetadata', onMeta, { once: true });
+    el.load();
+
+    return () => {
+      cancelled = true;
+      el.removeEventListener('loadedmetadata', onMeta);
+    };
+  }, [audioRef, currentSong?.id, currentSong?.audioUrl, setDuration]);
+
+  // Resume / pause without reloading src (runs after the load effect in the same commit).
+  useLayoutEffect(() => {
+    const el = audioRef.current;
+    if (!el || !currentSong?.audioUrl) return;
     if (isPlaying) {
-      void el.play().catch((e) => console.warn('[Player] play() failed', e?.message));
+      if (el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        void el.play().catch((e) => console.warn('[Player] play() failed', e?.message));
+      }
     } else {
       el.pause();
     }
-  }, [audioRef, currentSong?.id, currentSong?.audioUrl, currentSong?.startTimeSeconds, isPlaying, setDuration]);
+  }, [isPlaying, currentSong?.id, currentSong?.audioUrl, audioRef]);
 
   const handleTimeUpdate = React.useCallback(() => {
     if (!audioRef.current) return;
@@ -228,6 +234,8 @@ function PlayerAudio() {
   return (
     <audio
       ref={audioRef}
+      preload="auto"
+      playsInline
       onTimeUpdate={handleTimeUpdate}
       onLoadedMetadata={() => {
         const el = audioRef.current;
@@ -236,6 +244,10 @@ function PlayerAudio() {
         setDuration(Number.isFinite(d) ? d : 0);
       }}
       onCanPlay={handleCanPlay}
+      onError={() => {
+        const err = audioRef.current?.error;
+        if (err) console.warn('[Player] <audio> error', err.code, err.message);
+      }}
       onEnded={() => {
         if (!isLooping) playNext();
       }}

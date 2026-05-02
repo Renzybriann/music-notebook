@@ -315,9 +315,29 @@ export default function MusicNotebook() {
     }));
   };
 
-  const playSong = (song, list) => {
+  const playSong = async (song, list) => {
     const listToUse = list && list.length ? list : filteredSongs;
-    if (song.audioUrl) play(song, listToUse);
+    let playable = song;
+    if (!playable.audioUrl && playable.audioPath) {
+      try {
+        const url = await data.getAudioSignedUrl(playable.audioPath);
+        if (url) {
+          playable = { ...playable, audioUrl: url };
+          setSongs((prev) => prev.map((s) => (s.id === song.id ? playable : s)));
+        }
+      } catch (e) {
+        setError(e?.message || 'Could not open audio link');
+        return;
+      }
+    }
+    if (!playable.audioUrl) {
+      setError(
+        'No playable audio for this song. In Supabase, confirm the private audio bucket exists and Storage policies allow signed reads for paths like userId/filename (see docs/SUPABASE_STORAGE_SETUP.md).'
+      );
+      return;
+    }
+    const listPatched = listToUse.map((s) => (s.id === playable.id ? playable : s));
+    play(playable, listPatched);
   };
 
   if (!user) {
