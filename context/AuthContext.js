@@ -35,11 +35,11 @@ export function AuthProvider({ children }) {
         setLoading(false);
       });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
       setAuthError(null);
       if (session?.user) {
-        await fetchProfile(session.user.id);
+        void fetchProfile(session.user.id);
       } else {
         setProfile(null);
       }
@@ -51,7 +51,12 @@ export function AuthProvider({ children }) {
 
   async function fetchProfile(userId) {
     if (!supabase) return;
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+    if (error) {
+      console.warn('[Music Notebook] Profile fetch:', error.message);
+      setProfile({ display_name: null, bio: null });
+      return;
+    }
     setProfile(data ?? { display_name: null, bio: null });
   }
 

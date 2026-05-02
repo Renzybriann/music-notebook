@@ -11,6 +11,18 @@ import AuthForm from '@/components/AuthForm';
 import Player from '@/components/Player';
 import * as data from '@/lib/data';
 
+const LOAD_TIMEOUT_MS = 60_000;
+const UPLOAD_TIMEOUT_MS = 180_000;
+
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]);
+}
+
 const inputStyle = {
   fontFamily: 'Comic Sans MS, cursive',
   border: '3px solid #4A5FBF',
@@ -79,7 +91,11 @@ export default function MusicNotebook() {
     setLoading(true);
     setError(null);
     try {
-      const [s, a] = await Promise.all([data.getSongs(user.id), data.getAlbums(user.id)]);
+      const [s, a] = await withTimeout(
+        Promise.all([data.getSongs(user.id), data.getAlbums(user.id)]),
+        LOAD_TIMEOUT_MS,
+        'Loading took too long. Check your network, that your Supabase project is not paused, and that Storage buckets and policies match the docs.'
+      );
       setSongs(s);
       setAlbums(a);
     } catch (e) {
@@ -146,16 +162,20 @@ export default function MusicNotebook() {
     setUploading(true);
     setError(null);
     try {
-      const created = await data.uploadSong(user.id, {
-        title: newSong.title,
-        durationDisplay: newSong.duration,
-        durationSeconds: newSong.durationSeconds,
-        isReleased: newSong.isReleased,
-        notes: newSong.notes || null,
-        audioFile: newSong.audioFile,
-        startTimeSeconds: newSong.startTimeSeconds ?? null,
-        endTimeSeconds: newSong.endTimeSeconds ?? null,
-      });
+      const created = await withTimeout(
+        data.uploadSong(user.id, {
+          title: newSong.title,
+          durationDisplay: newSong.duration,
+          durationSeconds: newSong.durationSeconds,
+          isReleased: newSong.isReleased,
+          notes: newSong.notes || null,
+          audioFile: newSong.audioFile,
+          startTimeSeconds: newSong.startTimeSeconds ?? null,
+          endTimeSeconds: newSong.endTimeSeconds ?? null,
+        }),
+        UPLOAD_TIMEOUT_MS,
+        'Upload timed out. Try a smaller file, check your connection, and confirm the audio Storage bucket exists with upload policies for your account.'
+      );
       setSongs(prev => [created, ...prev]);
       setNewSong({ title: '', duration: '', durationSeconds: null, startTimeSeconds: 0, endTimeSeconds: null, isReleased: false, notes: '', audioFile: null, audioUrl: null });
       setShowUploadModal(false);
